@@ -17,7 +17,7 @@ from ingestion import fetch_prices as ingest_prices
 from source import cafef, cafef_price
 from storage import bronze
 from storage import watchlist as wl
-from serving import digest
+from serving import digest, freshness
 from serving.locking import PipelineBusy, pipeline_lock
 from transform import enrich, gold, silver
 
@@ -148,6 +148,7 @@ def _pipeline_steps(days: int, full_prices: bool) -> list:
             ("enrich-news", enrich.run_enrich),
             ("build-silver", silver.build_silver),
             ("build-gold", gold.build_gold),
+            ("check-freshness", freshness.check_freshness),
             ("digest", lambda: {"text": digest.build_digest()})]
 
 
