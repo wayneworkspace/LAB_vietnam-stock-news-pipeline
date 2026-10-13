@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest   # pin a version number once everything runs well
+    image: docker.n8n.io/n8nio/n8n:2.42.7   # pinned; upgrade on purpose (back up the n8n_data volume first)
     container_name: n8n
     restart: unless-stopped
     ports:

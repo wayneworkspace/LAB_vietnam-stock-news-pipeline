@@ -1,12 +1,13 @@
 # Python libraries for the Stock pipeline (installed into the pyworker image)
-duckdb
-pandas
-pyarrow
+# Pinned to the versions the tests ran against; bump them on purpose, not by accident.
+duckdb==1.5.6
+pandas==3.0.6
+pyarrow==26.0.0
 # vnstock  # TEMPORARILY REMOVED: quarantined on PyPI since 2026-09-24, waiting for the review result
-anthropic
-requests
-python-dotenv
-fastapi
-uvicorn
-beautifulsoup4
-lxml
+anthropic==1.13.0
+requests==2.34.2
+python-dotenv==1.2.4
+fastapi==0.143.0
+uvicorn==0.54.0
+beautifulsoup4==4.15.0
+lxml==6.1.3

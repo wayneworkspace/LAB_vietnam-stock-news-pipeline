@@ -208,9 +208,9 @@ WHERE date_key = DATE '2026-10-14';
 | Incremental prices | A short window never sees restated `adj_close` values for old dates (splits, dividends). Run `POST /fetch-prices?full=true` now and then, for example weekly. |
 | Data source | Prices come only from CafeF and are not verified against an independent source such as the exchange. |
 | AI scoring | The model sees headlines, not article bodies. Quality has not been validated. |
-| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. No alerting or backups yet. Back up `data/` manually; Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
+| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. No alerting or backups yet. Back up `data/` manually; Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
 | Scale | Designed for at most 10 tickers; not tuned for large volumes. |
-| Dependencies | The n8n image uses `latest`; pin a version before relying on it long-term. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
+| Dependencies | Python packages and the n8n image are pinned (`requirements.txt`, `docker-compose.yaml`); upgrade them on purpose and let CI confirm. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
 
 ---
 
