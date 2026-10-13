@@ -115,6 +115,8 @@ copy .env.example .env      # then fill in the keys listed in the file
 docker compose up -d --build
 ```
 
+The container runs as a normal user (uid 1000), not root. On Linux, create the data folder yourself first (`mkdir data`) so that user can write to it; Docker Desktop on Windows needs nothing.
+
 | Service | Address |
 |---|---|
 | n8n | http://localhost:5678 |
@@ -152,6 +154,7 @@ Build one small workflow in n8n (the workflow export is not stored in this repos
 | POST | `/init-db` | Create Bronze tables (safe to repeat) |
 | POST | `/watchlist` | Add or update a ticker (max 10 active) |
 | POST | `/run-pipeline?days=&full_prices=` | Run every step below in order under one lock; returns per-step status and the digest in `text` |
+| POST | `/backup` | Copy the Bronze database to `data/backups/` (one file per day, newest 7 kept) |
 | POST | `/fetch-news` | Scrape CafeF news into Bronze |
 | POST | `/fetch-prices?days=&full=` | Fetch daily prices into Bronze, incrementally per ticker; `days` is the first-load window, `full=true` refreshes the whole window |
 | POST | `/enrich-news?limit=` | Summarize and score sentiment (-2..+2) |
@@ -174,6 +177,8 @@ Build one small workflow in n8n (the workflow export is not stored in this repos
 | Close of session | `python/config.py` | `MARKET_CLOSE_TIME = "14:45"`: the HOSE closing auction ends then ([source](https://prime.kisvn.vn/support/trading-regulations/hose-transaction-guidance)). HNX and UPCOM are assumed to match; not verified. |
 | Holidays | `python/reference/vn_market_holidays.csv` | Weekdays on which the market is closed. Add next year's rows once the exchange publishes its schedule; a year with no rows is treated as weekends only. The 2026 rows follow the government schedule and are not all confirmed against HOSE notices (see the file). |
 | Tickers | `watchlist` table | Managed through `POST /watchlist`, no code change needed. |
+
+**Backups:** Bronze is the only layer that cannot be rebuilt. Add a second small n8n workflow: Schedule Trigger (daily, for example 02:00) → HTTP Request `POST http://pyworker:8000/backup`. Each run writes `data/backups/bronze-YYYY-MM-DD.sqlite` (SQLite online backup, integrity-checked) and keeps the newest 7. These files sit next to the data, so also copy `data/backups/` to another drive or machine. To restore: stop the containers, copy a backup over `data/bronze/bronze.sqlite`, start again, then run `/build-silver` and `/build-gold`.
 
 **Rolling out a new prompt:** edit `SYSTEM` and bump `PROMPT_VERSION` (Gold keeps reading the old `ACTIVE_PROMPT_VERSION`); run `/enrich-news` until `pending_left` is `0`; then set `ACTIVE_PROMPT_VERSION` in `.env`, recreate the container and run `/build-gold`.
 
@@ -209,7 +214,7 @@ WHERE date_key = DATE '2026-10-14';
 | Incremental prices | A short window never sees restated `adj_close` values for old dates (splits, dividends). Run `POST /fetch-prices?full=true` now and then, for example weekly. |
 | Data source | Prices come only from CafeF and are not verified against an independent source such as the exchange. |
 | AI scoring | The model sees headlines, not article bodies. Quality has not been validated. |
-| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. No alerting or backups yet. Back up `data/` manually; Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
+| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. No alerting yet. `POST /backup` copies Bronze daily (schedule it in n8n); Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
 | Scale | Designed for at most 10 tickers; not tuned for large volumes. |
 | Dependencies | Python packages and the n8n image are pinned (`requirements.txt`, `docker-compose.yaml`); upgrade them on purpose and let CI confirm. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
 
@@ -221,7 +226,7 @@ WHERE date_key = DATE '2026-10-14';
 - [ ] Failure alerts to a Discord channel
 - [ ] Cross-check prices against a second source
 - [ ] Dashboard on top of Gold (Looker Studio or Metabase)
-- [ ] Scheduled backups of `data/bronze/`
+- [x] Scheduled backups of `data/bronze/` (`POST /backup` + an n8n schedule)
 
 ---
 
