@@ -1,11 +1,11 @@
-"""Thao tác bảng watchlist (SQLite)."""
+"""Watchlist table operations (SQLite)."""
 from storage import bronze
 
 MAX_ACTIVE_TICKERS = 10
 
 
 def active_tickers(con) -> list:
-    """[(ma, san)] của các mã đang theo dõi; san trống thì mặc định HOSE."""
+    """[(ma, san)] for the tickers being tracked; an empty exchange defaults to HOSE."""
     return con.execute("SELECT ma, coalesce(san, 'HOSE') FROM watchlist WHERE active = 1 "
                        "ORDER BY ma").fetchall()
 
@@ -19,7 +19,7 @@ def upsert_watchlist(ma, ten=None, san=None, active=True, ghi_chu=None):
             n = con.execute("SELECT count(*) FROM watchlist WHERE active = 1 AND ma <> ?",
                             [ma]).fetchone()[0]
             if n >= MAX_ACTIVE_TICKERS:
-                raise ValueError(f"Đã đủ {MAX_ACTIVE_TICKERS} mã đang theo dõi")
+                raise ValueError(f"Watchlist is full: at most {MAX_ACTIVE_TICKERS} active tickers")
         con.execute(
             """INSERT INTO watchlist (ma, ten, san, active, ghi_chu) VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (ma) DO UPDATE SET ten = excluded.ten, san = excluded.san,

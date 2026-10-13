@@ -1,5 +1,5 @@
-"""Nguồn giá CafeF: lịch sử giao dịch theo mã (JSON). Không đụng DB.
-Lưu ý: tham số ngày gửi lên theo dạng MM/DD/YYYY, còn ngày trong kết quả là DD/MM/YYYY."""
+"""CafeF price source: trading history by ticker (JSON). No database access.
+Note: the date parameters are sent as MM/DD/YYYY, while the dates in the response are DD/MM/YYYY."""
 import json
 import os
 import time
@@ -39,7 +39,8 @@ def save_debug_json(ma: str, exchange: str = "HOSE") -> dict:
 
 def fetch_all_records(ma: str, exchange: str = "HOSE", days: int = 30,
                       delay_s: float = 1.0, provider=None, max_pages: int = 20) -> list[dict]:
-    """Gọi từng trang (server chỉ trả tối đa 20 dòng/trang) cho tới khi đủ TotalCount."""
+    """Fetch page by page (the server returns at most 20 rows per page) until TotalCount is reached.
+    Raises instead of returning a silently truncated result when max_pages runs out first."""
     get = provider or (lambda ma, ex, days, page: fetch_price_json(ma, ex, days, page))
     records, total = [], None
     for page in range(1, max_pages + 1):
@@ -51,6 +52,9 @@ def fetch_all_records(ma: str, exchange: str = "HOSE", days: int = 30,
         records.extend(rows)
         if not rows or (total is not None and len(records) >= total):
             break
+    else:
+        raise RuntimeError(f"{ma}: stopped after max_pages={max_pages} with {len(records)} of "
+                           f"{total} rows; use a shorter window or raise max_pages")
     return records
 
 
@@ -58,13 +62,13 @@ def parse_prices(records: list[dict]) -> list[dict]:
     out = []
     for r in records:
         try:
-            d, m, y = map(int, r["Ngay"].split("/"))        # kết quả theo DD/MM/YYYY
+            d, m, y = map(int, r["Ngay"].split("/"))        # the response uses DD/MM/YYYY
             out.append({
                 "trade_date": datetime(y, m, d).date().isoformat(),
                 "open": r.get("GiaMoCua"), "high": r.get("GiaCaoNhat"),
                 "low": r.get("GiaThapNhat"), "close": r.get("GiaDongCua"),
                 "adj_close": r.get("GiaDieuChinh"),
-                "volume": r.get("KhoiLuongKhopLenh"),        # chỉ khớp lệnh, chưa gồm thỏa thuận
+                "volume": r.get("KhoiLuongKhopLenh"),        # matched orders only, negotiated trades not included
                 "raw": r,
             })
         except (KeyError, ValueError, AttributeError):

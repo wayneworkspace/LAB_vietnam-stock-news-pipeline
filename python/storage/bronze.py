@@ -1,10 +1,11 @@
-"""Bronze: SQLite (OLTP) giữ dữ liệu thô, kết quả AI và nhật ký vận hành:
+"""Bronze: SQLite (OLTP) holding raw data, AI results and operational logs:
 raw_data, news_enriched, run_log, cost_log, watchlist.
-Silver và gold luôn dựng lại được từ bronze.
-Không bật WAL vì file nằm trên thư mục Windows gắn vào Docker (WAL có thể lỗi trên kiểu ổ này)."""
+Silver and Gold can always be rebuilt from Bronze.
+WAL is not enabled because the file lives in a Windows folder mounted into Docker (WAL can fail on that kind of drive)."""
 import os
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
+from typing import Optional
 
 from config import BRONZE_DB, VN_TZ
 
@@ -14,20 +15,20 @@ SCHEMA = [
         run_id          TEXT NOT NULL,
         source          TEXT NOT NULL,        -- cafef...
         data_type       TEXT NOT NULL,        -- news | price
-        ma              TEXT NOT NULL,
+        ma              TEXT NOT NULL,        -- ticker symbol
         request_params  TEXT,                 -- JSON
-        payload         TEXT NOT NULL,        -- JSON nguyên gốc
+        payload         TEXT NOT NULL,        -- original JSON
         payload_hash    TEXT NOT NULL,
         url             TEXT,
         published_at    TEXT,
         fetched_at      TEXT NOT NULL,
         fetch_date      TEXT NOT NULL,
-        apify_run_id    TEXT,
+        apify_run_id    TEXT,                 -- legacy column, no longer used
         adapter_version TEXT,
         UNIQUE (source, data_type, ma, payload_hash)
     )""",
     """CREATE TABLE IF NOT EXISTS news_enriched (
-        news_id        TEXT NOT NULL,         -- 16 ký tự đầu của payload_hash (băm url)
+        news_id        TEXT NOT NULL,         -- first 16 characters of payload_hash (hash of the url)
         ma             TEXT NOT NULL,
         summary        TEXT,
         sentiment      INTEGER CHECK (sentiment BETWEEN -2 AND 2),
@@ -37,11 +38,11 @@ SCHEMA = [
         PRIMARY KEY (news_id, ma, prompt_version)
     )""",
     """CREATE TABLE IF NOT EXISTS watchlist (
-        ma       TEXT PRIMARY KEY,
-        ten      TEXT,
-        san      TEXT,                        -- HOSE | HNX | UPCOM
+        ma       TEXT PRIMARY KEY,            -- ticker symbol
+        ten      TEXT,                        -- company name
+        san      TEXT,                        -- exchange: HOSE | HNX | UPCOM
         active   INTEGER NOT NULL DEFAULT 1,
-        ghi_chu  TEXT,
+        ghi_chu  TEXT,                        -- note
         added_at TEXT NOT NULL DEFAULT (datetime('now', '+7 hours'))
     )""",
     """CREATE TABLE IF NOT EXISTS run_log (
@@ -59,7 +60,7 @@ SCHEMA = [
         model         TEXT NOT NULL,
         input_tokens  INTEGER,
         output_tokens INTEGER,
-        est_usd       REAL,                   -- ước tính, cần đối chiếu bảng giá
+        est_usd       REAL,                   -- estimate only, check it against the official price list
         created_at    TEXT NOT NULL
     )""",
 ]
@@ -102,7 +103,7 @@ def log_end(con, run_id: str, status: str, rows_in: int, rows_out: int, error=No
 def insert_raw(con, run_id, source, data_type, ma, payload, payload_hash, fetched_at, fetch_date,
                request_params=None, url=None, published_at=None, adapter_version=None,
                apify_run_id=None) -> bool:
-    """Chỉ thêm. Trả True nếu là dòng mới, False nếu đã có (cùng source, data_type, ma, payload_hash)."""
+    """Append only. Returns True for a new row, False if it already exists (same source, data_type, ma, payload_hash)."""
     cur = con.execute(
         """INSERT OR IGNORE INTO raw_data (run_id, source, data_type, ma, request_params, payload,
                payload_hash, url, published_at, fetched_at, fetch_date, apify_run_id, adapter_version)
@@ -110,3 +111,23 @@ def insert_raw(con, run_id, source, data_type, ma, payload, payload_hash, fetche
         [run_id, source, data_type, ma, request_params, payload, payload_hash, url, published_at,
          fetched_at, fetch_date, apify_run_id, adapter_version])
     return cur.rowcount == 1
+
+
+def latest_price_date(con, ma: str) -> Optional[date]:
+    """Watermark for incremental price loads: the newest trade date already stored for a ticker.
+
+    Trade dates live inside the raw JSON payload as DD/MM/YYYY (the CafeF format), so they are read
+    with json_extract (SQLite JSON1, bundled with SQLite >= 3.38). Returns None when nothing usable
+    is stored, which makes the caller fall back to a full load."""
+    row = con.execute(
+        """WITH p AS (
+               SELECT json_extract(payload, '$.Ngay') AS d FROM raw_data
+               WHERE source = 'cafef' AND data_type = 'price' AND ma = ?)
+           SELECT max(substr(d, 7, 4) || '-' || substr(d, 4, 2) || '-' || substr(d, 1, 2))
+           FROM p WHERE d GLOB '[0-3][0-9]/[0-1][0-9]/[0-9][0-9][0-9][0-9]'""", [ma]).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return date.fromisoformat(row[0])
+    except ValueError:      # a malformed date slipped past the pattern, so do not trust the watermark
+        return None

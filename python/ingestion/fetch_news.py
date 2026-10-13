@@ -1,5 +1,5 @@
-"""Ingestion: lấy tin từ nguồn cho các mã active, chỉ ghi vào bronze (raw_data + run_log + JSON theo ngày).
-Chạy lại không tạo dòng trùng. Việc bóc tách thành bảng news nằm ở tầng silver."""
+"""Ingestion: fetch news for the active tickers and write to Bronze only (raw_data + run_log + a daily JSON file).
+Re-running creates no duplicate rows. Turning the raw payloads into the news table is Silver's job."""
 import hashlib
 import json
 import os
