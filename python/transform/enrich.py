@@ -1,7 +1,7 @@
-"""Transform: tóm tắt tin và chấm cảm xúc -2..+2 bằng Claude Haiku 4.5.
-Đọc tin từ bronze (raw_data) và ghi kết quả vào bronze (news_enriched).
-Chỉ dùng TIÊU ĐỀ tin (chưa đọc nội dung bài). Chạy lại không xử lý lại tin đã có
-kết quả cùng PROMPT_VERSION."""
+"""Transform: summarise news and score sentiment from -2 to +2 with Claude Haiku 4.5.
+Reads news from Bronze (raw_data) and writes the results to Bronze (news_enriched).
+Only the news HEADLINE is used (article bodies are not read). Re-running skips news that already has
+a result for the same PROMPT_VERSION."""
 import json
 import os
 import re
@@ -13,9 +13,9 @@ from storage import bronze
 from transform.prompts import PROMPT_VERSION, SYSTEM
 
 MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-MAX_PER_RUN = int(os.getenv("ENRICH_MAX_PER_RUN", "40"))   # chặn chi phí mỗi lần chạy
+MAX_PER_RUN = int(os.getenv("ENRICH_MAX_PER_RUN", "40"))   # caps the cost of a single run
 BATCH = 20
-# Giá ước tính USD / 1 triệu token. CHƯA KIỂM CHỨNG, cần đối chiếu trang giá Anthropic.
+# Estimated USD per 1M tokens. NOT VERIFIED: check against Anthropic's pricing page.
 PRICE_IN, PRICE_OUT = 1.0, 5.0
 
 
@@ -32,7 +32,7 @@ def _title(payload: str) -> str:
 def run_enrich(client=None, limit: int = MAX_PER_RUN) -> dict:
     if client is None:
         import anthropic
-        client = anthropic.Anthropic()   # đọc ANTHROPIC_API_KEY từ môi trường
+        client = anthropic.Anthropic()   # reads ANTHROPIC_API_KEY from the environment
     started = datetime.now(VN_TZ)
     now = started.strftime("%Y-%m-%d %H:%M:%S")
     run_id = f"enrich-{started:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
@@ -66,7 +66,7 @@ def run_enrich(client=None, limit: int = MAX_PER_RUN) -> dict:
                 tout += resp.usage.output_tokens
                 results = _parse(resp.content[0].text)
             except Exception as e:
-                out["errors"].append(f"lô {i // BATCH + 1}: {e}")
+                out["errors"].append(f"batch {i // BATCH + 1}: {e}")
                 continue
             for item in results:
                 r = by_id.get(str(item.get("id")))

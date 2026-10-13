@@ -1,16 +1,14 @@
-"""Silver (DuckDB, OLAP): làm sạch và chuẩn hóa dữ liệu từ bronze.
-prices_daily và news được dựng lại hoàn toàn từ bronze mỗi lần chạy (chạy lại không sinh trùng).
-news_enriched cũng được dựng lại từ bronze (kết quả AI được lưu ở bronze, nơi bền nhất).
-Đơn vị giá giữ nguyên như nguồn (nghìn đồng)."""
+"""Silver (DuckDB, OLAP): clean and standardise the data coming from Bronze.
+prices_daily and news are rebuilt completely from Bronze on every run (re-running creates no duplicates).
+news_enriched is rebuilt from Bronze as well (AI results are stored in Bronze, the most durable layer).
+Prices keep the unit used by the source (thousand VND)."""
 import os
 
 import duckdb
 import pandas as pd
 
-from config import SILVER_DB
+from config import MARKET_CLOSE_TIME, SILVER_DB
 from storage import bronze
-
-CLOSE_HOUR = 15   # tin đăng từ giờ này trở đi tính cho phiên kế tiếp (cần đối chiếu giờ đóng cửa HOSE)
 
 PRICES_SQL = r"""
 CREATE OR REPLACE TABLE prices_daily AS
@@ -61,7 +59,7 @@ base AS (
 )
 SELECT news_id, ma, title, url, published_at, published_date, news_type, time_known,
        CASE WHEN published_at IS NULL THEN NULL
-            WHEN time_known AND hour(published_at) >= {close_hour}
+            WHEN time_known AND CAST(published_at AS TIME) >= CAST('{close_time}' AS TIME)
                  THEN (SELECT min(trade_date) FROM calendar c WHERE c.trade_date > b.published_date)
             ELSE (SELECT min(trade_date) FROM calendar c WHERE c.trade_date >= b.published_date)
        END AS effective_trade_date,
@@ -87,8 +85,8 @@ ENRICHED_COLS = ["news_id", "ma", "summary", "sentiment", "model", "prompt_versi
 
 
 def _preserve_old_enrichment(con, b):
-    """Phiên bản trước lưu news_enriched ngay trong silver. Chuyển các dòng đó sang bronze
-    (bỏ qua dòng đã có) trước khi dựng lại, để không mất kết quả AI đã trả tiền."""
+    """An earlier version kept news_enriched inside Silver. Move those rows to Bronze (skipping rows
+    already there) before rebuilding, so AI results that were already paid for are not lost."""
     has = con.execute("SELECT count(*) FROM information_schema.tables "
                       "WHERE table_name = 'news_enriched'").fetchone()[0]
     if not has:
@@ -129,7 +127,7 @@ def build_silver() -> dict:
         con.execute(PRICES_SQL)
         con.execute("CREATE OR REPLACE TEMP TABLE calendar AS "
                     "SELECT DISTINCT trade_date FROM prices_daily WHERE is_valid")
-        con.execute(NEWS_SQL.replace("{close_hour}", str(CLOSE_HOUR)))
+        con.execute(NEWS_SQL.replace("{close_time}", MARKET_CLOSE_TIME))
         con.execute(ENRICHED_SQL)
         q = lambda s: con.execute(s).fetchone()[0]
         return {

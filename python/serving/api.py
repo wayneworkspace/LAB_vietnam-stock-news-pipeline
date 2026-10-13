@@ -1,22 +1,46 @@
-"""API nhỏ cho n8n gọi. Thêm endpoint mới (cào tin, lấy giá...) ở đây."""
+"""Small API for n8n to call. Add new endpoints (scraping, prices...) here.
+Every endpoint that touches a database runs under one non-blocking lock: an overlapping call gets 409.
+The /debug/* endpoints exist only when ENABLE_DEBUG_ENDPOINTS=true."""
 import importlib
-from typing import Optional
+import time
+from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import config
 from ingestion import fetch_news as ingest_news
 from ingestion import fetch_prices as ingest_prices
 from source import cafef, cafef_price
 from storage import bronze
 from storage import watchlist as wl
 from serving import digest
+from serving.locking import PipelineBusy, pipeline_lock
 from transform import enrich, gold, silver
 
 app = FastAPI(title="Stock pyworker")
+debug_router = APIRouter(prefix="/debug")
 
 LIBS = ["duckdb", "pandas", "pyarrow",
         "anthropic", "requests", "dotenv"]
+
+
+def _locked(fn: Callable, *args, **kwargs):
+    """Run fn under the pipeline lock; a second caller gets 409 instead of waiting."""
+    try:
+        with pipeline_lock():
+            return fn(*args, **kwargs)
+    except PipelineBusy as e:
+        raise HTTPException(409, str(e), headers={"Retry-After": "30"})
+
+
+def _layer_built(fn: Callable):
+    """The previous layer has not been built yet -> 409 (as before)."""
+    try:
+        return fn()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/health")
@@ -32,13 +56,13 @@ def check():
             m = importlib.import_module(name)
             result[name] = getattr(m, "__version__", "ok")
         except Exception as e:
-            result[name] = f"LỖI: {e}"
+            result[name] = f"ERROR: {e}"
     return result
 
 
 @app.post("/init-db")
 def init_db():
-    """Tạo bảng bronze nếu chưa có. Gọi lại an toàn. Silver và gold do /build-silver, /build-gold tạo."""
+    """Create the Bronze tables if missing. Safe to call repeatedly. Silver and Gold are created by /build-silver, /build-gold."""
     return {"bronze": bronze.init_bronze()}
 
 
@@ -52,7 +76,7 @@ class Ticker(BaseModel):
 
 @app.post("/watchlist")
 def watchlist(t: Ticker):
-    """Thêm hoặc cập nhật một mã trong bảng watchlist (tối đa 10 mã đang theo dõi)."""
+    """Add or update a ticker in the watchlist table (at most 10 active tickers)."""
     try:
         rows = wl.upsert_watchlist(**t.model_dump())
     except ValueError as e:
@@ -60,61 +84,103 @@ def watchlist(t: Ticker):
     return {"watchlist": rows}
 
 
-@app.post("/debug/cafef-html")
+@debug_router.post("/cafef-html")
 def debug_cafef_html(ma: str = "FPT"):
-    """Lưu HTML trang tin CafeF của 1 mã vào data/debug để viết bộ đọc tin."""
+    """Save the CafeF news page HTML of one ticker to data/debug, to write the news parser."""
     try:
         return cafef.save_debug_html(ma)
     except Exception as e:
-        raise HTTPException(502, f"Không lấy được trang CafeF: {e}")
+        raise HTTPException(502, f"Could not fetch the CafeF page: {e}")
 
 
 @app.post("/fetch-news")
 def fetch_news():
-    """Lấy tin CafeF cho các mã active trong watchlist, ghi raw_data + news + run_log."""
-    return ingest_news.run_fetch_news()
+    """Fetch CafeF news for the active watchlist tickers, write raw_data + news + run_log."""
+    return _locked(ingest_news.run_fetch_news)
 
 
 @app.post("/enrich-news")
 def enrich_news(limit: int = enrich.MAX_PER_RUN):
-    """Đọc tin từ bronze, tóm tắt + chấm cảm xúc (-2..+2) bằng Claude Haiku 4.5, ghi kết quả vào bronze."""
-    return enrich.run_enrich(limit=limit)
+    """Read news from Bronze, summarise and score sentiment (-2..+2) with Claude Haiku 4.5, write the results to Bronze."""
+    return _locked(enrich.run_enrich, limit=limit)
 
 
-@app.post("/debug/cafef-price")
+@debug_router.post("/cafef-price")
 def debug_cafef_price(ma: str = "FPT", exchange: str = "HOSE"):
-    """Lưu JSON giá thô của CafeF vào data/debug để viết bộ đọc giá."""
+    """Save the raw CafeF price JSON to data/debug, to write the price parser."""
     try:
         return cafef_price.save_debug_json(ma, exchange)
     except Exception as e:
-        raise HTTPException(502, f"Không lấy được giá CafeF: {e}")
+        raise HTTPException(502, f"Could not fetch CafeF prices: {e}")
 
 
 @app.post("/fetch-prices")
-def fetch_prices(days: int = 30):
-    """Lấy giá lịch sử (mặc định 30 ngày gần nhất) cho các mã active, ghi prices + raw_data + run_log."""
-    return ingest_prices.run_fetch_prices(days=days)
+def fetch_prices(days: int = 30, full: bool = False):
+    """Fetch price history for the active tickers. Only the days since the last stored price (plus a lookback)
+    are fetched; `days` is the window for a first load, and full=true forces a full refresh of that window."""
+    return _locked(ingest_prices.run_fetch_prices, days=days, full=full)
 
 
 @app.post("/build-silver")
 def build_silver():
-    """Dựng lại silver (prices_daily, news) từ bronze. Chạy lại an toàn."""
-    return silver.build_silver()
+    """Rebuild Silver (prices_daily, news) from Bronze. Safe to re-run."""
+    return _locked(silver.build_silver)
 
 
 @app.post("/build-gold")
 def build_gold():
-    """Dựng lại gold (dim_ticker, dim_date, fact_price_daily, fact_news) từ silver."""
-    try:
-        return gold.build_gold()
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
+    """Rebuild Gold (dim_ticker, dim_date, fact_price_daily, fact_news) from Silver and export it to Parquet."""
+    return _locked(lambda: _layer_built(gold.build_gold))
 
 
 @app.post("/digest")
 def make_digest():
-    """Tạo nội dung bản tin sáng (văn bản, dưới 2000 ký tự) từ gold để n8n gửi Discord."""
+    """Build the morning digest text (under 2000 characters) from Gold for n8n to post to Discord."""
+    return _locked(lambda: _layer_built(lambda: {"text": digest.build_digest()}))
+
+
+def _pipeline_steps(days: int, full_prices: bool) -> list:
+    return [("fetch-news", ingest_news.run_fetch_news),
+            ("fetch-prices", lambda: ingest_prices.run_fetch_prices(days=days, full=full_prices)),
+            ("enrich-news", enrich.run_enrich),
+            ("build-silver", silver.build_silver),
+            ("build-gold", gold.build_gold),
+            ("digest", lambda: {"text": digest.build_digest()})]
+
+
+@app.post("/run-pipeline")
+def run_pipeline(days: int = 30, full_prices: bool = False):
+    """Run fetch -> enrich -> Silver -> Gold -> digest in order, under one lock.
+    Stops at the first step that fails (later steps are "skipped") and answers 500, so the n8n node fails.
+    The response lists every step with its status; the digest text is in `text`."""
+    steps = []
+    state = {"status": "ok", "steps": steps}
+    failed = False
     try:
-        return {"text": digest.build_digest()}
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
+        with pipeline_lock():
+            for name, fn in _pipeline_steps(days, full_prices):
+                if failed:
+                    steps.append({"name": name, "status": "skipped"})
+                    continue
+                began = time.monotonic()
+                entry = {"name": name, "status": "ok"}
+                try:
+                    result = fn()
+                    if isinstance(result, dict) and result.get("status") == "error":
+                        raise RuntimeError("the step reported status=error")
+                    if isinstance(result, dict) and "text" in result:
+                        state["text"] = result["text"]
+                except Exception as e:
+                    entry.update(status="failed", error=f"{type(e).__name__}: {e}")
+                    failed = True
+                entry["duration_s"] = round(time.monotonic() - began, 2)
+                steps.append(entry)
+    except PipelineBusy as e:
+        raise HTTPException(409, str(e), headers={"Retry-After": "30"})
+    if failed:
+        state["status"] = "failed"
+    return JSONResponse(status_code=500 if failed else 200, content=state)
+
+
+if config.ENABLE_DEBUG_ENDPOINTS:
+    app.include_router(debug_router)

@@ -1,8 +1,8 @@
-# Thư viện Python cho pipeline Stock (cài vào venv trong image n8n)
+# Python libraries for the Stock pipeline (installed into the pyworker image)
 duckdb
 pandas
 pyarrow
-# vnstock  # TẠM BỎ: PyPI quarantine từ 2026-09-24, chờ kết quả rà soát
+# vnstock  # TEMPORARILY REMOVED: quarantined on PyPI since 2026-09-24, waiting for the review result
 anthropic
 requests
 python-dotenv

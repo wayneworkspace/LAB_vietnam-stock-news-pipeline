@@ -1,14 +1,26 @@
-"""Ingestion: lấy giá lịch sử cho các mã active, chỉ ghi vào bronze (raw_data + run_log + JSON theo ngày).
-Nếu nguồn điều chỉnh giá một ngày thì bản mới được thêm vào raw_data (chỉ thêm, không sửa);
-tầng silver lấy bản mới nhất cho mỗi (mã, ngày)."""
+"""Ingestion: fetch daily price history for the active tickers and write to Bronze only
+(raw_data + run_log + a JSON snapshot per run).
+
+Loads are incremental per ticker. The watermark is the newest trade date already stored in Bronze;
+each run re-fetches the gap since then plus a lookback window (PRICE_LOOKBACK_DAYS), so late
+corrections inside that window are still captured. A ticker with nothing stored yet, or a run with
+full=True, loads the whole `days` window instead.
+
+If the source revises a price, the new version is appended to raw_data (append only, nothing is
+edited) and Silver keeps the latest row per (ticker, date).
+
+Caveat: corporate actions (splits, dividends) restate adj_close for OLD dates, which a short
+incremental window cannot see. Run with full=true now and then (for example weekly) to refresh history.
+"""
 import hashlib
 import json
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Optional
 
-from config import RAW_DIR, VN_TZ
+from config import PRICE_LOOKBACK_DAYS, RAW_DIR, VN_TZ
 from source import cafef_price
 from storage import bronze, watchlist
 
@@ -19,9 +31,24 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None) -> dict:
+def plan_window(last_date: Optional[date], today: date, bootstrap_days: int,
+                lookback_days: int, full: bool = False) -> tuple:
+    """Decide how many days back to fetch. Returns (window_days, mode).
+    mode is "full" (forced), "bootstrap" (nothing stored yet) or "incremental"."""
+    if full:
+        return bootstrap_days, "full"
+    if last_date is None:
+        return bootstrap_days, "bootstrap"
+    gap_days = max((today - last_date).days, 0)
+    return gap_days + lookback_days, "incremental"
+
+
+def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None,
+                     full: bool = False, today: Optional[date] = None) -> dict:
+    """`days` is the window for a first load or a full refresh; later runs fetch only what is new."""
     started = datetime.now(VN_TZ)
     now = started.strftime("%Y-%m-%d %H:%M:%S")
+    today = today or started.date()
     run_id = f"fetch-prices-{started:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     os.makedirs(RAW_DIR, exist_ok=True)
     bronze.init_bronze()
@@ -35,7 +62,9 @@ def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None) -> dic
             if i:
                 time.sleep(delay_s)
             try:
-                records = cafef_price.fetch_all_records(ma, san, days, provider=provider,
+                last = bronze.latest_price_date(con, ma)
+                window, mode = plan_window(last, today, days, PRICE_LOOKBACK_DAYS, full)
+                records = cafef_price.fetch_all_records(ma, san, window, provider=provider,
                                                         delay_s=min(delay_s, 1.0))
             except Exception as e:
                 summary["errors"][ma] = str(e)
@@ -47,11 +76,13 @@ def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None) -> dic
                 if bronze.insert_raw(
                         con, run_id, "cafef", "price", ma, payload,
                         _sha(f"{ma}|{p['trade_date']}|{payload}"), now, now[:10],
-                        request_params=json.dumps({"days": days, "exchange": san}),
+                        request_params=json.dumps({"days": window, "exchange": san}),
                         adapter_version=ADAPTER_VERSION):
                     new += 1
             con.commit()
-            summary["tickers"][ma] = {"fetched": len(rows), "new": new}
+            summary["tickers"][ma] = {"fetched": len(rows), "new": new, "mode": mode,
+                                      "window_days": window,
+                                      "watermark": last.isoformat() if last else None}
             total_in += len(rows)
             total_new += new
             fn = os.path.join(RAW_DIR, f"cafef_price_{ma}_{now[:10]}.json")
