@@ -6,7 +6,6 @@ rows in it is treated as having weekends only.
 """
 import os
 from datetime import date
-from typing import Optional
 
 import pandas as pd
 
@@ -14,16 +13,16 @@ HOLIDAYS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "r
                             "vn_market_holidays.csv")
 
 
-def load_holidays(path: Optional[str] = None) -> pd.DataFrame:
+def load_holidays() -> pd.DataFrame:
     """Read the holiday file: one row per closed weekday (columns: date, name)."""
-    df = pd.read_csv(path or HOLIDAYS_CSV, comment="#", dtype=str, skipinitialspace=True)
+    df = pd.read_csv(HOLIDAYS_CSV, comment="#", dtype=str, skipinitialspace=True)
     df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
     return df[["date", "name"]]
 
 
-def build_calendar(first_day: date, last_day: date, holidays: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+def build_calendar(first_day: date, last_day: date) -> pd.DataFrame:
     """One row per day, from Jan 1 of first_day's year to Dec 31 of last_day's year."""
-    h = load_holidays() if holidays is None else holidays
+    h = load_holidays()
     days = pd.date_range(start=date(first_day.year, 1, 1), end=date(last_day.year, 12, 31), freq="D")
     names = dict(zip(h["date"], h["name"]))
     cal = pd.DataFrame({"date_key": days})
