@@ -5,6 +5,7 @@
 
 # Data and temporary files
 workflows/
+!.github/workflows/
 data/
 to_delete/
 docs/

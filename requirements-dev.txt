@@ -1,4 +1,4 @@
 # Extra packages for running the tests: pip install -r requirements-dev.txt
 -r requirements.txt
-pytest
-httpx   # needed by FastAPI's TestClient
+pytest==9.1.1
+httpx==0.28.1   # needed by FastAPI's TestClient

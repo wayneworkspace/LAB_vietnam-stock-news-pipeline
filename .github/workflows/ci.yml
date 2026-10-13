@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"        # same minor version as the Dockerfile
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the compose file
+        run: docker compose config --quiet
+      - name: Build the pyworker image
+        run: docker build -t stock-pyworker:ci .
+      - name: Import the app inside the image (the code is mounted, not copied, as in docker-compose)
+        run: >
+          docker run --rm -v "$PWD/python:/app" -e DATA_DIR=/tmp/data stock-pyworker:ci
+          python -c "import server; print('import ok')"
