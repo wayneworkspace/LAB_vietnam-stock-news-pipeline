@@ -1,13 +1,8 @@
 """Static trading calendar for the Vietnamese stock market.
 
 A day is an expected trading day when it is a weekday and is not listed in
-python/reference/vn_market_holidays.csv. The file is maintained by hand once a year, so every
-calendar row also carries `holiday_data_available`: False means the year is not covered and only the
-weekday rule was applied (best effort).
-
-Observed price data always wins over this calendar. Silver unions the two, and Gold exposes both
-`is_trading_day` (expected) and `has_price_data` (observed), so a missing price on an expected
-trading day shows up as a data gap instead of silently looking like a holiday.
+python/reference/vn_market_holidays.csv. The file is maintained by hand once a year; a year with no
+rows in it is treated as having weekends only.
 """
 import os
 from datetime import date
@@ -26,40 +21,10 @@ def load_holidays(path: Optional[str] = None) -> pd.DataFrame:
     return df[["date", "name"]]
 
 
-def covered_years(holidays: pd.DataFrame) -> set:
-    """Years that have at least one row in the holiday file."""
-    return {int(y) for y in holidays["date"].dt.year.unique()}
-
-
-def _holidays(holidays: Optional[pd.DataFrame]) -> pd.DataFrame:
+def build_calendar(first_day: date, last_day: date, holidays: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """One row per day, from Jan 1 of first_day's year to Dec 31 of last_day's year."""
     h = load_holidays() if holidays is None else holidays
-    if h.empty:
-        raise ValueError("The holiday file has no rows; add at least one holiday")
-    return h
-
-
-def calendar_bounds(data_min: Optional[date], data_max: Optional[date],
-                    holidays: Optional[pd.DataFrame] = None) -> tuple:
-    """(start, end) of the calendar: Jan 1 of the first covered year to Dec 31 of the last one,
-    stretched to include any data that falls outside that range."""
-    years = covered_years(_holidays(holidays))
-    start, end = date(min(years), 1, 1), date(max(years), 12, 31)
-    if data_min is not None and data_min < start:
-        start = data_min
-    if data_max is not None and data_max > end:
-        end = data_max
-    return start, end
-
-
-def holiday_calendar_stale(latest_day: date, holidays: Optional[pd.DataFrame] = None) -> bool:
-    """True when `latest_day` falls in a year the holiday file does not cover."""
-    return latest_day.year not in covered_years(_holidays(holidays))
-
-
-def build_calendar(start: date, end: date, holidays: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-    """One row per calendar day from start to end (inclusive)."""
-    h = _holidays(holidays)
-    days = pd.date_range(start=start, end=end, freq="D")
+    days = pd.date_range(start=date(first_day.year, 1, 1), end=date(last_day.year, 12, 31), freq="D")
     names = dict(zip(h["date"], h["name"]))
     cal = pd.DataFrame({"date_key": days})
     cal["year"] = days.year
@@ -71,6 +36,5 @@ def build_calendar(start: date, end: date, holidays: Optional[pd.DataFrame] = No
     holiday_name = cal["date_key"].map(names)
     cal["is_holiday"] = holiday_name.notna()
     cal["holiday_name"] = holiday_name.astype("object").where(holiday_name.notna(), None)
-    cal["holiday_data_available"] = cal["year"].isin(covered_years(h))
     cal["is_trading_day"] = ~cal["is_weekend"] & ~cal["is_holiday"]
     return cal

@@ -1,7 +1,6 @@
 # Vietnamese stock market closures that fall on WEEKDAYS (weekends are handled by the calendar itself).
 # Maintained by hand once a year. The exchange announcement (HOSE / HNX) is the authority;
 # these dates follow the government's public-holiday schedule and may differ for a bridge day.
-# A year that has no row here is treated as "holiday data not available" (weekday-only calendar).
 #
 # 2026 sources:
 #   https://www.vietnam-briefing.com/news/2026-vietnam-public-holiday-schedule-tet-national-day-holidays.html

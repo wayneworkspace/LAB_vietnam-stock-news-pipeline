@@ -76,7 +76,7 @@ def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None,
                 if bronze.insert_raw(
                         con, run_id, "cafef", "price", ma, payload,
                         _sha(f"{ma}|{p['trade_date']}|{payload}"), now, now[:10],
-                        request_params=json.dumps({"days": window, "exchange": san, "mode": mode}),
+                        request_params=json.dumps({"days": window, "exchange": san}),
                         adapter_version=ADAPTER_VERSION):
                     new += 1
             con.commit()
@@ -85,11 +85,9 @@ def run_fetch_prices(days: int = 30, delay_s: float = 2.0, provider=None,
                                       "watermark": last.isoformat() if last else None}
             total_in += len(rows)
             total_new += new
-            # One snapshot per run: an incremental run must not overwrite the file of an earlier run today.
-            fn = os.path.join(RAW_DIR, f"cafef_price_{ma}_{now[:10]}_{now[11:].replace(':', '')}.json")
+            fn = os.path.join(RAW_DIR, f"cafef_price_{ma}_{now[:10]}.json")
             with open(fn, "w", encoding="utf-8") as f:
-                json.dump({"ma": ma, "fetched_at": now, "mode": mode, "records": records},
-                          f, ensure_ascii=False, indent=2)
+                json.dump({"ma": ma, "fetched_at": now, "records": records}, f, ensure_ascii=False, indent=2)
             summary["tickers"][ma]["file"] = os.path.basename(fn)
         status = "error" if summary["errors"] and not summary["tickers"] else "ok"
         bronze.log_end(con, run_id, status, total_in, total_new,

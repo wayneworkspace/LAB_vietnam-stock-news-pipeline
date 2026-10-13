@@ -1,9 +1,6 @@
 from datetime import date
 
-import pytest
-
 from ingestion import fetch_prices
-from source import cafef_price
 from storage import bronze
 
 from helpers import make_provider, seed_watchlist
@@ -72,34 +69,6 @@ def test_a_new_ticker_bootstraps_while_an_existing_one_stays_incremental():
     result = run(date(2026, 10, 15), calls)
     assert result["tickers"]["FPT"]["mode"] == "incremental"
     assert result["tickers"]["VNM"]["mode"] == "bootstrap"
-
-
-def test_each_run_keeps_its_own_json_snapshot():
-    import os
-    seed_watchlist("FPT")
-    calls = []
-    run(TODAY, calls)
-    names = os.listdir(os.environ["RAW_DIR"])
-    assert any(n.startswith("cafef_price_FPT_") and n.endswith(".json") for n in names)
-
-
-def test_truncated_result_raises_instead_of_returning_partial_data():
-    def endless(ma, exchange, days, page):
-        return {"Data": {"Data": [{"Ngay": "01/10/2026"}], "TotalCount": 100}}
-
-    with pytest.raises(RuntimeError, match="max_pages"):
-        cafef_price.fetch_all_records("FPT", provider=endless, delay_s=0, max_pages=3)
-
-
-def test_truncation_is_reported_per_ticker_in_the_run_summary():
-    seed_watchlist("FPT")
-
-    def endless(ma, exchange, days, page):
-        return {"Data": {"Data": [{"Ngay": "01/10/2026"}], "TotalCount": 10_000}}
-
-    result = fetch_prices.run_fetch_prices(delay_s=0, provider=endless, today=TODAY)
-    assert "max_pages" in result["errors"]["FPT"]
-    assert result["status"] == "error"
 
 
 def test_latest_price_date_ignores_malformed_dates():

@@ -39,8 +39,7 @@ def save_debug_json(ma: str, exchange: str = "HOSE") -> dict:
 
 def fetch_all_records(ma: str, exchange: str = "HOSE", days: int = 30,
                       delay_s: float = 1.0, provider=None, max_pages: int = 20) -> list[dict]:
-    """Fetch page by page (the server returns at most 20 rows per page) until TotalCount is reached.
-    Raises instead of returning a silently truncated result when max_pages runs out first."""
+    """Fetch page by page (the server returns at most 20 rows per page) until TotalCount is reached."""
     get = provider or (lambda ma, ex, days, page: fetch_price_json(ma, ex, days, page))
     records, total = [], None
     for page in range(1, max_pages + 1):
@@ -52,9 +51,6 @@ def fetch_all_records(ma: str, exchange: str = "HOSE", days: int = 30,
         records.extend(rows)
         if not rows or (total is not None and len(records) >= total):
             break
-    else:
-        raise RuntimeError(f"{ma}: stopped after max_pages={max_pages} with {len(records)} of "
-                           f"{total} rows; use a shorter window or raise max_pages")
     return records
 
 

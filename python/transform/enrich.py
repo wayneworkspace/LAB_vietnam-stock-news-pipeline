@@ -10,7 +10,7 @@ from datetime import datetime
 
 from config import VN_TZ
 from storage import bronze
-from transform.prompts import ACTIVE_PROMPT_VERSION, PROMPT_VERSION, SYSTEM
+from transform.prompts import PROMPT_VERSION, SYSTEM
 
 MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 MAX_PER_RUN = int(os.getenv("ENRICH_MAX_PER_RUN", "40"))   # caps the cost of a single run
@@ -39,7 +39,6 @@ def run_enrich(client=None, limit: int = MAX_PER_RUN) -> dict:
     bronze.init_bronze()
     b = bronze.connect()
     out = {"run_id": run_id, "model": MODEL, "prompt_version": PROMPT_VERSION,
-           "active_prompt_version": ACTIVE_PROMPT_VERSION,
            "done": 0, "skipped_invalid": 0, "pending_left": 0, "errors": []}
     try:
         bronze.log_start(b, run_id, "enrich-news")
@@ -57,7 +56,6 @@ def run_enrich(client=None, limit: int = MAX_PER_RUN) -> dict:
         for i in range(0, len(rows), BATCH):
             chunk = rows[i:i + BATCH]
             by_id = {f"{r[1]}:{r[0]}": r for r in chunk}
-            # Sent to the model, so it stays in Vietnamese like the system prompt.
             user = "Các tin cần xử lý (mỗi dòng: id | mã | tiêu đề):\n" + "\n".join(
                 f"{k} | {r[1]} | {r[2]}" for k, r in by_id.items())
             try:

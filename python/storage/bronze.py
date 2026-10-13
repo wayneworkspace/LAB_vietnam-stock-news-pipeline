@@ -15,7 +15,7 @@ SCHEMA = [
         run_id          TEXT NOT NULL,
         source          TEXT NOT NULL,        -- cafef...
         data_type       TEXT NOT NULL,        -- news | price
-        ma              TEXT NOT NULL,        -- ticker symbol
+        ma              TEXT NOT NULL,
         request_params  TEXT,                 -- JSON
         payload         TEXT NOT NULL,        -- original JSON
         payload_hash    TEXT NOT NULL,
@@ -23,7 +23,7 @@ SCHEMA = [
         published_at    TEXT,
         fetched_at      TEXT NOT NULL,
         fetch_date      TEXT NOT NULL,
-        apify_run_id    TEXT,                 -- legacy column, no longer used
+        apify_run_id    TEXT,
         adapter_version TEXT,
         UNIQUE (source, data_type, ma, payload_hash)
     )""",
@@ -38,11 +38,11 @@ SCHEMA = [
         PRIMARY KEY (news_id, ma, prompt_version)
     )""",
     """CREATE TABLE IF NOT EXISTS watchlist (
-        ma       TEXT PRIMARY KEY,            -- ticker symbol
-        ten      TEXT,                        -- company name
-        san      TEXT,                        -- exchange: HOSE | HNX | UPCOM
+        ma       TEXT PRIMARY KEY,
+        ten      TEXT,
+        san      TEXT,                        -- HOSE | HNX | UPCOM
         active   INTEGER NOT NULL DEFAULT 1,
-        ghi_chu  TEXT,                        -- note
+        ghi_chu  TEXT,
         added_at TEXT NOT NULL DEFAULT (datetime('now', '+7 hours'))
     )""",
     """CREATE TABLE IF NOT EXISTS run_log (

@@ -12,7 +12,6 @@ import os
 PROMPT_VERSION = "v1"
 ACTIVE_PROMPT_VERSION = os.getenv("ACTIVE_PROMPT_VERSION", "v1")
 
-# The prompt stays in Vietnamese on purpose: the headlines are Vietnamese and so is the summary we want back.
 SYSTEM = """Bạn là trợ lý tóm tắt tin chứng khoán cho một nhà đầu tư mới. Bạn chỉ cung cấp thông tin, \
 không khuyến nghị mua, bán hay giữ.
 
