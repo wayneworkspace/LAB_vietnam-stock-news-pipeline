@@ -1,5 +1,4 @@
-"""Serving: build the morning digest from Gold (read-only). Facts only, no recommendations.
-The digest text itself is Vietnamese on purpose: it is the product that gets posted to Discord."""
+"""Serving: build the morning digest from Gold (read-only). Facts only, no recommendations."""
 import os
 from datetime import datetime, timedelta
 

@@ -125,7 +125,7 @@ def latest_price_date(con, ma: str) -> Optional[date]:
                WHERE source = 'cafef' AND data_type = 'price' AND ma = ?)
            SELECT max(substr(d, 7, 4) || '-' || substr(d, 4, 2) || '-' || substr(d, 1, 2))
            FROM p WHERE d GLOB '[0-3][0-9]/[0-1][0-9]/[0-9][0-9][0-9][0-9]'""", [ma]).fetchone()
-    if not row or not row[0]:
+    if not row[0]:
         return None
     try:
         return date.fromisoformat(row[0])
