@@ -196,6 +196,7 @@ WHERE date_key = DATE '2026-10-14';
 |---|---|
 | Cannot reach `pyworker:8000` from the browser | That hostname only exists inside the Docker network. Use `localhost:8000` from Windows; n8n uses `http://pyworker:8000`. |
 | Parser returns nothing | CafeF may have changed its markup. Run `/debug/cafef-html` or `/debug/cafef-price`, inspect the saved file in `data/debug/`, then fix the parser in `python/source/`. |
+| Need to see why a run failed | `docker compose logs -f pyworker`. Every `/run-pipeline` line carries the `run_id` that is also in the response, e.g. `run=1a2b3c4d step=build-silver status=failed`, followed by the traceback. `docker compose ps` shows the `healthy` state of `pyworker`. |
 | Any endpoint returns `409` "Another pipeline step is already running" | A step or `/run-pipeline` is in progress. Retry later (see `Retry-After`). The lock is released automatically if the worker restarts. |
 | `/debug/...` returns `404` | The debug endpoints are off by default. Set `ENABLE_DEBUG_ENDPOINTS=true` in `.env` and recreate the container. |
 | `/build-gold` or `/digest` returns 409 | The previous layer has not been built yet. Run `/build-silver`, then `/build-gold`. |

@@ -14,7 +14,8 @@ services:
       - n8n_data:/home/node/.n8n
       - ./data:/data
     depends_on:
-      - pyworker
+      pyworker:
+        condition: service_healthy
 
   pyworker:
     build:
@@ -33,6 +34,12 @@ services:
     volumes:
       - ./python:/app
       - ./data:/data
+    healthcheck:   # the slim image has no curl, so use Python
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   n8n_data:

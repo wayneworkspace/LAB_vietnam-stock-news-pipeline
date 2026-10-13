@@ -2,7 +2,9 @@
 Every endpoint that touches a database runs under one non-blocking lock: an overlapping call gets 409.
 The /debug/* endpoints exist only when ENABLE_DEBUG_ENDPOINTS=true."""
 import importlib
+import logging
 import time
+import uuid
 from typing import Callable, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -20,6 +22,7 @@ from serving.locking import PipelineBusy, pipeline_lock
 from transform import enrich, gold, silver
 
 app = FastAPI(title="Stock pyworker")
+log = logging.getLogger("pipeline")
 debug_router = APIRouter(prefix="/debug")
 
 LIBS = ["duckdb", "pandas", "pyarrow",
@@ -152,14 +155,17 @@ def _pipeline_steps(days: int, full_prices: bool) -> list:
 def run_pipeline(days: int = 30, full_prices: bool = False):
     """Run fetch -> enrich -> Silver -> Gold -> digest in order, under one lock.
     Stops at the first step that fails (later steps are "skipped") and answers 500, so the n8n node fails.
-    The response lists every step with its status; the digest text is in `text`."""
+    The response lists every step with its status; the digest text is in `text`.
+    Every step is logged with the run_id (see `docker compose logs pyworker`)."""
     steps = []
-    state = {"status": "ok", "steps": steps}
+    run_id = uuid.uuid4().hex[:8]
+    state = {"run_id": run_id, "status": "ok", "steps": steps}
     failed = False
     try:
         with pipeline_lock():
             for name, fn in _pipeline_steps(days, full_prices):
                 if failed:
+                    log.warning("run=%s step=%s status=skipped", run_id, name)
                     steps.append({"name": name, "status": "skipped"})
                     continue
                 began = time.monotonic()
@@ -173,12 +179,16 @@ def run_pipeline(days: int = 30, full_prices: bool = False):
                 except Exception as e:
                     entry.update(status="failed", error=f"{type(e).__name__}: {e}")
                     failed = True
+                    log.exception("run=%s step=%s status=failed", run_id, name)
                 entry["duration_s"] = round(time.monotonic() - began, 2)
+                if entry["status"] == "ok":
+                    log.info("run=%s step=%s status=ok duration=%.2fs", run_id, name, entry["duration_s"])
                 steps.append(entry)
     except PipelineBusy as e:
         raise HTTPException(409, str(e), headers={"Retry-After": "30"})
     if failed:
         state["status"] = "failed"
+    log.info("run=%s finished status=%s", run_id, state["status"])
     return JSONResponse(status_code=500 if failed else 200, content=state)
 
 
