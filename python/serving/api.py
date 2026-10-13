@@ -15,7 +15,7 @@ import config
 from ingestion import fetch_news as ingest_news
 from ingestion import fetch_prices as ingest_prices
 from source import cafef, cafef_price
-from storage import bronze
+from storage import backup, bronze
 from storage import watchlist as wl
 from serving import digest, freshness
 from serving.locking import PipelineBusy, pipeline_lock
@@ -140,6 +140,12 @@ def build_gold():
 def make_digest():
     """Build the morning digest text (under 2000 characters) from Gold for n8n to post to Discord."""
     return _locked(lambda: _layer_built(lambda: {"text": digest.build_digest()}))
+
+
+@app.post("/backup")
+def backup_bronze():
+    """Copy the Bronze database to data/backups/ (daily file, newest 7 kept)."""
+    return _locked(lambda: _layer_built(backup.backup_bronze))
 
 
 def _pipeline_steps(days: int, full_prices: bool) -> list:

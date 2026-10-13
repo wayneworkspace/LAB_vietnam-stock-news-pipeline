@@ -28,6 +28,8 @@ jobs:
           docker compose config --quiet
       - name: Build the pyworker image
         run: docker build -t stock-pyworker:ci .
+      - name: The container must not run as root
+        run: test "$(docker run --rm stock-pyworker:ci id -u)" != "0"
       - name: Import the app inside the image (the code is mounted, not copied, as in docker-compose)
         run: >
           docker run --rm -v "$PWD/python:/app" -e DATA_DIR=/tmp/data stock-pyworker:ci

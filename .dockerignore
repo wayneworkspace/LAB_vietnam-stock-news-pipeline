@@ -1,0 +1,11 @@
+# The image only needs requirements.txt (the code is mounted at run time), so keep the build context small
+# and keep secrets and data out of it.
+.git
+.github
+.env
+.env.*
+data/
+tests/
+assets/
+**/__pycache__
+.pytest_cache
