@@ -25,7 +25,7 @@ A small, idempotent data pipeline that collects news and daily prices for Vietna
 
 **Solution** — A five-layer pipeline with a medallion data model. Raw responses are stored append-only in Bronze. Silver and Gold are rebuilt from scratch on every run, so re-running never creates duplicates. n8n triggers the steps on a schedule, and a small FastAPI worker does the actual work. The design philosophy: *"Source knows the website, Storage knows the database, and nothing else knows both."*
 
-**Data Flow** — n8n cron (07:30, Mon–Fri) → `POST /run-pipeline` → Discord webhook. Behind that one call the worker runs, in order: fetch news → fetch prices (incremental) → enrich news → build Silver → build Gold (+ Parquet export) → build the digest. Every step is also available as its own endpoint.
+**Data Flow** — n8n cron (07:30, Mon–Fri) → `POST /run-pipeline` → Discord webhook. Behind that one call the worker runs, in order: fetch news → fetch prices (incremental) → enrich news → build Silver → build Gold (+ Parquet export) → check that prices are fresh → build the digest. Every step is also available as its own endpoint.
 
 <p align="center">
   <img src="assets/Architecture.png" alt="Architecture: CafeF to Source, Ingestion, Bronze, Silver, Gold, Digest and Discord, orchestrated by n8n" width="900" />
@@ -144,6 +144,19 @@ Build one small workflow in n8n (the workflow export is not stored in this repos
 
 `/run-pipeline` answers `500` when a step fails (the remaining steps are reported as `skipped`), so the HTTP node fails and no stale digest is posted. Store the webhook URL only in an n8n credential, never in code or in a committed file.
 
+### Failure alerts (Discord)
+
+A failed run answers `500`, but nobody sees that unless n8n tells them. `n8n/error-alert.workflow.json` is a two-node workflow (Error Trigger → Discord) that posts the workflow name, the error and a link to the failed execution:
+
+1. n8n → *Import from file* → `n8n/error-alert.workflow.json`. Open the Discord node and select your webhook credential (create it with the Discord webhook URL; the URL is never stored in this repository). Activate the workflow.
+2. Open the scheduled pipeline workflow → *Settings* → *Error workflow* → choose *Stock pipeline - failure alert*.
+
+The import has not been tested against a live n8n here; if a node shows a parameter warning, re-select the authentication ("Webhook") and credential.
+
+### Freshness check
+
+Before the digest, `/run-pipeline` runs `check-freshness`: for every active ticker, the newest stored price must be at least the last trading day before today (weekends and the holiday file decide what a trading day is; today's price is never required). A stale or missing ticker fails the run with a message such as `Stale prices (expected at least 2026-10-13): FPT: newest price 2026-10-09`, so no stale digest is posted and the alert above fires. A holiday missing from `python/reference/vn_market_holidays.csv` also shows up here as stale until it is added.
+
 ---
 
 ## API Endpoints
@@ -205,6 +218,7 @@ WHERE date_key = DATE '2026-10-14';
 | Any endpoint returns `409` "Another pipeline step is already running" | A step or `/run-pipeline` is in progress. Retry later (see `Retry-After`). The lock is released automatically if the worker restarts. |
 | `/debug/...` returns `404` | The debug endpoints are off by default. Set `ENABLE_DEBUG_ENDPOINTS=true` in `.env` and recreate the container. |
 | `/build-gold` or `/digest` returns 409 | The previous layer has not been built yet. Run `/build-silver`, then `/build-gold`. |
+| `/run-pipeline` returns `500` with `Stale prices` | The newest price is older than the last trading day. Check `/fetch-prices` (CafeF down or markup changed) and whether a holiday is missing from the holiday file. |
 | `/enrich-news` fails to authenticate | `ANTHROPIC_API_KEY` is missing or wrong in `.env`. Fix it and recreate the container. |
 
 ### Limitations
@@ -214,7 +228,7 @@ WHERE date_key = DATE '2026-10-14';
 | Incremental prices | A short window never sees restated `adj_close` values for old dates (splits, dividends). Run `POST /fetch-prices?full=true` now and then, for example weekly. |
 | Data source | Prices come only from CafeF and are not verified against an independent source such as the exchange. |
 | AI scoring | The model sees headlines, not article bodies. Quality has not been validated. |
-| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. No alerting yet. `POST /backup` copies Bronze daily (schedule it in n8n); Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
+| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. Failure alerts need the n8n error workflow (see above). `POST /backup` copies Bronze daily (schedule it in n8n); Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
 | Scale | Designed for at most 10 tickers; not tuned for large volumes. |
 | Dependencies | Python packages and the n8n image are pinned (`requirements.txt`, `docker-compose.yaml`); upgrade them on purpose and let CI confirm. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
 
@@ -223,7 +237,7 @@ WHERE date_key = DATE '2026-10-14';
 ## Roadmap
 
 - [ ] Unit tests for parsers and SQL transforms
-- [ ] Failure alerts to a Discord channel
+- [x] Failure alerts to a Discord channel (n8n error workflow)
 - [ ] Cross-check prices against a second source
 - [ ] Dashboard on top of Gold (Looker Studio or Metabase)
 - [x] Scheduled backups of `data/bronze/` (`POST /backup` + an n8n schedule)
