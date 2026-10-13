@@ -1,16 +1,20 @@
-"""Silver (DuckDB, OLAP): làm sạch và chuẩn hóa dữ liệu từ bronze.
-prices_daily và news được dựng lại hoàn toàn từ bronze mỗi lần chạy (chạy lại không sinh trùng).
-news_enriched cũng được dựng lại từ bronze (kết quả AI được lưu ở bronze, nơi bền nhất).
-Đơn vị giá giữ nguyên như nguồn (nghìn đồng)."""
+"""Silver (DuckDB, OLAP): clean and standardise the data coming from Bronze.
+prices_daily and news are rebuilt completely from Bronze on every run (re-running creates no duplicates).
+news_enriched is rebuilt from Bronze as well (AI results are stored in Bronze, the most durable layer).
+Prices keep the unit used by the source (thousand VND)."""
 import os
+from datetime import datetime, timedelta
 
 import duckdb
 import pandas as pd
 
-from config import SILVER_DB
+from config import MARKET_CLOSE_TIME, SILVER_DB, VN_TZ
 from storage import bronze
+from transform import trading_calendar
 
-CLOSE_HOUR = 15   # tin đăng từ giờ này trở đi tính cho phiên kế tiếp (cần đối chiếu giờ đóng cửa HOSE)
+# The static calendar is extended this far past today so that "next trading day" still resolves
+# for news published just before a long break (Tet is at most 5 weekdays, 9 days with weekends).
+CALENDAR_LOOKAHEAD_DAYS = 15
 
 PRICES_SQL = r"""
 CREATE OR REPLACE TABLE prices_daily AS
@@ -39,6 +43,7 @@ FROM latest
 ORDER BY ma, trade_date
 """
 
+# news_type values are data, not code: 'cong_bo' = company disclosure, 'bai_bao' = press article.
 NEWS_SQL = r"""
 CREATE OR REPLACE TABLE news AS
 WITH parsed AS (
@@ -61,13 +66,22 @@ base AS (
 )
 SELECT news_id, ma, title, url, published_at, published_date, news_type, time_known,
        CASE WHEN published_at IS NULL THEN NULL
-            WHEN time_known AND hour(published_at) >= {close_hour}
+            WHEN time_known AND CAST(published_at AS TIME) >= CAST('{close_time}' AS TIME)
                  THEN (SELECT min(trade_date) FROM calendar c WHERE c.trade_date > b.published_date)
             ELSE (SELECT min(trade_date) FROM calendar c WHERE c.trade_date >= b.published_date)
        END AS effective_trade_date,
        raw_id AS source_raw_id
 FROM base b
 ORDER BY ma, published_at
+"""
+
+# Trading days = days the static calendar expects (weekday, not a holiday) UNION days with a valid price.
+# The union keeps a day that really traded even if the holiday file wrongly lists it as closed.
+CALENDAR_SQL = """
+CREATE OR REPLACE TEMP TABLE calendar AS
+SELECT CAST(date_key AS DATE) AS trade_date FROM static_calendar WHERE is_trading_day
+UNION
+SELECT trade_date FROM prices_daily WHERE is_valid
 """
 
 
@@ -87,8 +101,8 @@ ENRICHED_COLS = ["news_id", "ma", "summary", "sentiment", "model", "prompt_versi
 
 
 def _preserve_old_enrichment(con, b):
-    """Phiên bản trước lưu news_enriched ngay trong silver. Chuyển các dòng đó sang bronze
-    (bỏ qua dòng đã có) trước khi dựng lại, để không mất kết quả AI đã trả tiền."""
+    """An earlier version kept news_enriched inside Silver. Move those rows to Bronze (skipping rows
+    already there) before rebuilding, so AI results that were already paid for are not lost."""
     has = con.execute("SELECT count(*) FROM information_schema.tables "
                       "WHERE table_name = 'news_enriched'").fetchone()[0]
     if not has:
@@ -127,9 +141,15 @@ def build_silver() -> dict:
         con.register("raw_price", raw_price)
         con.register("raw_enriched", enr)
         con.execute(PRICES_SQL)
-        con.execute("CREATE OR REPLACE TEMP TABLE calendar AS "
-                    "SELECT DISTINCT trade_date FROM prices_daily WHERE is_valid")
-        con.execute(NEWS_SQL.replace("{close_hour}", str(CLOSE_HOUR)))
+
+        first_price, last_price = con.execute("SELECT min(trade_date), max(trade_date) FROM prices_daily").fetchone()
+        today = datetime.now(VN_TZ).date()
+        start, end = trading_calendar.calendar_bounds(first_price, max(last_price, today) if last_price else today)
+        con.register("static_calendar",
+                     trading_calendar.build_calendar(start, end + timedelta(days=CALENDAR_LOOKAHEAD_DAYS)))
+        con.execute(CALENDAR_SQL)
+
+        con.execute(NEWS_SQL.replace("{close_time}", MARKET_CLOSE_TIME))
         con.execute(ENRICHED_SQL)
         q = lambda s: con.execute(s).fetchone()[0]
         return {

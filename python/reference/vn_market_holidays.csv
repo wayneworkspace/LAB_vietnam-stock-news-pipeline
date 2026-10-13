@@ -1,0 +1,26 @@
+# Vietnamese stock market closures that fall on WEEKDAYS (weekends are handled by the calendar itself).
+# Maintained by hand once a year. The exchange announcement (HOSE / HNX) is the authority;
+# these dates follow the government's public-holiday schedule and may differ for a bridge day.
+# A year that has no row here is treated as "holiday data not available" (weekday-only calendar).
+#
+# 2026 sources:
+#   https://www.vietnam-briefing.com/news/2026-vietnam-public-holiday-schedule-tet-national-day-holidays.html
+#   https://en.baochinhphu.vn/ministry-of-home-affairs-announces-2026-holiday-schedule-111251017163421877.htm
+# Not yet confirmed against HOSE announcements: 2026-01-02, 2026-08-31 and 2026-11-24.
+#
+# To add a year: append its rows below, then run /build-silver and /build-gold.
+date,name
+2026-01-01,New Year's Day
+2026-01-02,New Year holiday (day off)
+2026-02-16,Lunar New Year (Tet)
+2026-02-17,Lunar New Year (Tet)
+2026-02-18,Lunar New Year (Tet)
+2026-02-19,Lunar New Year (Tet)
+2026-02-20,Lunar New Year (Tet)
+2026-04-27,Hung Kings Commemoration Day (observed)
+2026-04-30,Reunification Day
+2026-05-01,International Labour Day
+2026-08-31,National Day (bridge day)
+2026-09-01,National Day
+2026-09-02,National Day
+2026-11-24,Vietnam Culture Day

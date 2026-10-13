@@ -1,5 +1,5 @@
-"""Nguồn tin CafeF: gọi trang tin doanh nghiệp theo mã và đọc HTML. Không đụng DB.
-robots.txt của CafeF hiện cho phép; chỉ gọi 1 trang/mã/lần."""
+"""CafeF news source: fetch a company's news page by ticker and parse the HTML. No database access.
+CafeF's robots.txt currently allows this; only one page per ticker per run is requested."""
 import os
 import re
 from datetime import datetime
@@ -32,7 +32,7 @@ def save_debug_html(ma: str) -> dict:
 
 
 def _clean_url(href: str) -> str:
-    """Bỏ phần ?utm_source=... để cùng một tin luôn ra cùng một url."""
+    """Drop the ?utm_source=... part so the same article always yields the same url."""
     if href.startswith("/"):
         href = "https://cafef.vn" + href
     p = urlsplit(href)
@@ -55,7 +55,7 @@ def parse_news(html: str) -> list[dict]:
             m = re.search(r"(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2})", t.get_text())
             if m:
                 d, mo, y, h, mi = map(int, m.groups())
-                published = datetime(y, mo, d, h, mi).isoformat(sep=" ")  # giờ Việt Nam
+                published = datetime(y, mo, d, h, mi).isoformat(sep=" ")  # Vietnam time
         items.append({
             "title": a.get_text(strip=True),
             "url": _clean_url(a["href"]),

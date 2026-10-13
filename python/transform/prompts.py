@@ -1,7 +1,18 @@
-"""Prompt tóm tắt + chấm cảm xúc. Đổi nội dung thì tăng PROMPT_VERSION để chạy lại và so sánh."""
+"""Prompt for summarising news and scoring sentiment.
+
+Two separate settings control prompt versions:
+- PROMPT_VERSION: the version enrich-news WRITES. Bump it after any edit to SYSTEM so the news is
+  scored again and the results can be compared side by side with the old version.
+- ACTIVE_PROMPT_VERSION: the version Gold READS (and therefore the digest shows). Keep it on the old
+  version until enrich-news has scored every news item with the new one, then promote it.
+  Override it with the ACTIVE_PROMPT_VERSION environment variable.
+"""
+import os
 
 PROMPT_VERSION = "v1"
+ACTIVE_PROMPT_VERSION = os.getenv("ACTIVE_PROMPT_VERSION", "v1")
 
+# The prompt stays in Vietnamese on purpose: the headlines are Vietnamese and so is the summary we want back.
 SYSTEM = """Bạn là trợ lý tóm tắt tin chứng khoán cho một nhà đầu tư mới. Bạn chỉ cung cấp thông tin, \
 không khuyến nghị mua, bán hay giữ.
 

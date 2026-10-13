@@ -1,4 +1,5 @@
-"""Serving: tạo nội dung bản tin sáng từ gold (đọc ở chế độ chỉ đọc). Chỉ nêu dữ kiện, không khuyến nghị."""
+"""Serving: build the morning digest from Gold (read-only). Facts only, no recommendations.
+The digest text itself is Vietnamese on purpose: it is the product that gets posted to Discord."""
 import os
 from datetime import datetime, timedelta
 
@@ -7,7 +8,7 @@ import duckdb
 from config import GOLD_DB, VN_TZ
 
 SENT = {-2: "rất tiêu cực", -1: "hơi tiêu cực", 0: "trung lập", 1: "hơi tích cực", 2: "rất tích cực"}
-LIMIT = 1900   # Discord giới hạn 2000 ký tự mỗi tin nhắn
+LIMIT = 1900   # Discord allows 2000 characters per message
 FOOTER = ("\n_Giá lấy từ CafeF, chưa đối chiếu nguồn khác. Cảm xúc do AI chấm, chỉ dựa trên tiêu đề._"
           "\n_Tham khảo, không phải khuyến nghị._")
 
@@ -18,14 +19,14 @@ def _num(x, nd=2):
 
 def build_digest() -> str:
     if not os.path.exists(GOLD_DB):
-        raise RuntimeError("Chưa có gold, hãy chạy /build-gold trước")
+        raise RuntimeError("No Gold data yet, run /build-gold first")
     now = datetime.now(VN_TZ).replace(tzinfo=None)
     con = duckdb.connect(GOLD_DB, read_only=True)
     try:
         try:
             tickers = [r[0] for r in con.execute("SELECT ma FROM dim_ticker WHERE active ORDER BY ma").fetchall()]
         except duckdb.CatalogException:
-            raise RuntimeError("Gold chưa đủ bảng, hãy chạy /build-gold trước")
+            raise RuntimeError("Gold is incomplete, run /build-gold first")
         lines = [f"**Bản tin sáng {now:%d/%m/%Y}**"]
         for ma in tickers:
             p = con.execute("SELECT date_key, close, pct_change FROM fact_price_daily WHERE ma = ? "

@@ -1,15 +1,16 @@
-# Bí mật
+# Secrets
 .env
 .env.*
 !.env.example
 
-# Dữ liệu và file tạm
+# Data and temporary files
 workflows/
 data/
 to_delete/
 docs/
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Tùy chọn: bỏ dòng dưới nếu muốn commit
+# Optional: remove the line below if you want to commit it
 CLAUDE.md
