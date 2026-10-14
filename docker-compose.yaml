@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n:2.42.7   # pinned; upgrade on purpose (back up the n8n_data volume first)
+    image: docker.n8n.io/n8nio/n8n:latest   # pin a version number once everything runs well
     container_name: n8n
     restart: unless-stopped
     ports:
@@ -14,8 +14,7 @@ services:
       - n8n_data:/home/node/.n8n
       - ./data:/data
     depends_on:
-      pyworker:
-        condition: service_healthy
+      - pyworker
 
   pyworker:
     build:
@@ -34,12 +33,6 @@ services:
     volumes:
       - ./python:/app
       - ./data:/data
-    healthcheck:   # the slim image has no curl, so use Python
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
 volumes:
   n8n_data:

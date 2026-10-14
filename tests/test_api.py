@@ -77,17 +77,3 @@ def test_debug_endpoints_exist_only_when_enabled(monkeypatch):
         monkeypatch.undo()
         importlib.reload(config)
         importlib.reload(api)
-
-
-def test_every_step_is_logged_with_the_run_id_and_failures_keep_their_traceback(monkeypatch, caplog):
-    monkeypatch.setattr(api, "_pipeline_steps", steps(ok("fetch-news"), boom("build-silver"), ok("build-gold")))
-    with caplog.at_level("INFO", logger="pipeline"):
-        body = TestClient(api.app).post("/run-pipeline").json()
-    run_id = body["run_id"]
-    lines = [r.getMessage() for r in caplog.records if r.name == "pipeline"]
-    assert all(run_id in line for line in lines)
-    assert any("step=fetch-news status=ok" in line for line in lines)
-    assert any("step=build-silver status=failed" in line for line in lines)
-    assert any("step=build-gold status=skipped" in line for line in lines)
-    assert any(r.exc_info for r in caplog.records)          # the traceback is in the log, not only the error text
-    assert any("finished status=failed" in line for line in lines)

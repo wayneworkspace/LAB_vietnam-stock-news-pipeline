@@ -25,7 +25,7 @@ A small, idempotent data pipeline that collects news and daily prices for Vietna
 
 **Solution** — A five-layer pipeline with a medallion data model. Raw responses are stored append-only in Bronze. Silver and Gold are rebuilt from scratch on every run, so re-running never creates duplicates. n8n triggers the steps on a schedule, and a small FastAPI worker does the actual work. The design philosophy: *"Source knows the website, Storage knows the database, and nothing else knows both."*
 
-**Data Flow** — n8n cron (07:30, Mon–Fri) → `POST /run-pipeline` → Discord webhook. Behind that one call the worker runs, in order: fetch news → fetch prices (incremental) → enrich news → build Silver → build Gold (+ Parquet export) → check that prices are fresh → build the digest. Every step is also available as its own endpoint.
+**Data Flow** — n8n cron (07:30, Mon–Fri) → `POST /run-pipeline` → Discord webhook. Behind that one call the worker runs, in order: fetch news → fetch prices (incremental) → enrich news → build Silver → build Gold (+ Parquet export) → build the digest. Every step is also available as its own endpoint.
 
 <p align="center">
   <img src="assets/Architecture.png" alt="Architecture: CafeF to Source, Ingestion, Bronze, Silver, Gold, Digest and Discord, orchestrated by n8n" width="900" />
@@ -115,8 +115,6 @@ copy .env.example .env      # then fill in the keys listed in the file
 docker compose up -d --build
 ```
 
-The container runs as a normal user (uid 1000), not root. On Linux, create the data folder yourself first (`mkdir data`) so that user can write to it; Docker Desktop on Windows needs nothing.
-
 | Service | Address |
 |---|---|
 | n8n | http://localhost:5678 |
@@ -144,19 +142,6 @@ Build one small workflow in n8n (the workflow export is not stored in this repos
 
 `/run-pipeline` answers `500` when a step fails (the remaining steps are reported as `skipped`), so the HTTP node fails and no stale digest is posted. Store the webhook URL only in an n8n credential, never in code or in a committed file.
 
-### Failure alerts (Discord)
-
-A failed run answers `500`, but nobody sees that unless n8n tells them. `n8n/error-alert.workflow.json` is a two-node workflow (Error Trigger → Discord) that posts the workflow name, the error and a link to the failed execution:
-
-1. n8n → *Import from file* → `n8n/error-alert.workflow.json`. Open the Discord node and select your webhook credential (create it with the Discord webhook URL; the URL is never stored in this repository). Activate the workflow.
-2. Open the scheduled pipeline workflow → *Settings* → *Error workflow* → choose *Stock pipeline - failure alert*.
-
-The import has not been tested against a live n8n here; if a node shows a parameter warning, re-select the authentication ("Webhook") and credential.
-
-### Freshness check
-
-Before the digest, `/run-pipeline` runs `check-freshness`: for every active ticker, the newest stored price must be at least the last trading day before today (weekends and the holiday file decide what a trading day is; today's price is never required). A stale or missing ticker fails the run with a message such as `Stale prices (expected at least 2026-10-13): FPT: newest price 2026-10-09`, so no stale digest is posted and the alert above fires. A holiday missing from `python/reference/vn_market_holidays.csv` also shows up here as stale until it is added.
-
 ---
 
 ## API Endpoints
@@ -167,7 +152,6 @@ Before the digest, `/run-pipeline` runs `check-freshness`: for every active tick
 | POST | `/init-db` | Create Bronze tables (safe to repeat) |
 | POST | `/watchlist` | Add or update a ticker (max 10 active) |
 | POST | `/run-pipeline?days=&full_prices=` | Run every step below in order under one lock; returns per-step status and the digest in `text` |
-| POST | `/backup` | Copy the Bronze database to `data/backups/` (one file per day, newest 7 kept) |
 | POST | `/fetch-news` | Scrape CafeF news into Bronze |
 | POST | `/fetch-prices?days=&full=` | Fetch daily prices into Bronze, incrementally per ticker; `days` is the first-load window, `full=true` refreshes the whole window |
 | POST | `/enrich-news?limit=` | Summarize and score sentiment (-2..+2) |
@@ -191,8 +175,6 @@ Before the digest, `/run-pipeline` runs `check-freshness`: for every active tick
 | Holidays | `python/reference/vn_market_holidays.csv` | Weekdays on which the market is closed. Add next year's rows once the exchange publishes its schedule; a year with no rows is treated as weekends only. The 2026 rows follow the government schedule and are not all confirmed against HOSE notices (see the file). |
 | Tickers | `watchlist` table | Managed through `POST /watchlist`, no code change needed. |
 
-**Backups:** Bronze is the only layer that cannot be rebuilt. Add a second small n8n workflow: Schedule Trigger (daily, for example 02:00) → HTTP Request `POST http://pyworker:8000/backup`. Each run writes `data/backups/bronze-YYYY-MM-DD.sqlite` (SQLite online backup, integrity-checked) and keeps the newest 7. These files sit next to the data, so also copy `data/backups/` to another drive or machine. To restore: stop the containers, copy a backup over `data/bronze/bronze.sqlite`, start again, then run `/build-silver` and `/build-gold`.
-
 **Rolling out a new prompt:** edit `SYSTEM` and bump `PROMPT_VERSION` (Gold keeps reading the old `ACTIVE_PROMPT_VERSION`); run `/enrich-news` until `pending_left` is `0`; then set `ACTIVE_PROMPT_VERSION` in `.env`, recreate the container and run `/build-gold`.
 
 **Parquet export:** `/build-gold` also writes `data/gold/parquet/`. The two fact tables are partitioned by `date_key` (one folder per day, to demonstrate partition pruning; for years of history use coarser partitions):
@@ -214,11 +196,9 @@ WHERE date_key = DATE '2026-10-14';
 |---|---|
 | Cannot reach `pyworker:8000` from the browser | That hostname only exists inside the Docker network. Use `localhost:8000` from Windows; n8n uses `http://pyworker:8000`. |
 | Parser returns nothing | CafeF may have changed its markup. Run `/debug/cafef-html` or `/debug/cafef-price`, inspect the saved file in `data/debug/`, then fix the parser in `python/source/`. |
-| Need to see why a run failed | `docker compose logs -f pyworker`. Every `/run-pipeline` line carries the `run_id` that is also in the response, e.g. `run=1a2b3c4d step=build-silver status=failed`, followed by the traceback. `docker compose ps` shows the `healthy` state of `pyworker`. |
 | Any endpoint returns `409` "Another pipeline step is already running" | A step or `/run-pipeline` is in progress. Retry later (see `Retry-After`). The lock is released automatically if the worker restarts. |
 | `/debug/...` returns `404` | The debug endpoints are off by default. Set `ENABLE_DEBUG_ENDPOINTS=true` in `.env` and recreate the container. |
 | `/build-gold` or `/digest` returns 409 | The previous layer has not been built yet. Run `/build-silver`, then `/build-gold`. |
-| `/run-pipeline` returns `500` with `Stale prices` | The newest price is older than the last trading day. Check `/fetch-prices` (CafeF down or markup changed) and whether a holiday is missing from the holiday file. |
 | `/enrich-news` fails to authenticate | `ANTHROPIC_API_KEY` is missing or wrong in `.env`. Fix it and recreate the container. |
 
 ### Limitations
@@ -228,19 +208,19 @@ WHERE date_key = DATE '2026-10-14';
 | Incremental prices | A short window never sees restated `adj_close` values for old dates (splits, dividends). Run `POST /fetch-prices?full=true` now and then, for example weekly. |
 | Data source | Prices come only from CafeF and are not verified against an independent source such as the exchange. |
 | AI scoring | The model sees headlines, not article bodies. Quality has not been validated. |
-| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. GitHub Actions (`.github/workflows/ci.yml`) runs the tests and builds the Docker image on every pull request. Failure alerts need the n8n error workflow (see above). `POST /backup` copies Bronze daily (schedule it in n8n); Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
+| Quality and ops | Tests cover the transforms, calendar, lock and API switches (`pip install -r requirements-dev.txt`, then `python -m pytest`); parsers have none. No alerting or backups yet. Back up `data/` manually; Silver and Gold can be rebuilt from Bronze, so Bronze matters most. |
 | Scale | Designed for at most 10 tickers; not tuned for large volumes. |
-| Dependencies | Python packages and the n8n image are pinned (`requirements.txt`, `docker-compose.yaml`); upgrade them on purpose and let CI confirm. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
+| Dependencies | The n8n image uses `latest`; pin a version before relying on it long-term. `vnstock` is not used because it was quarantined on PyPI at the time of building. |
 
 ---
 
 ## Roadmap
 
 - [ ] Unit tests for parsers and SQL transforms
-- [x] Failure alerts to a Discord channel (n8n error workflow)
+- [ ] Failure alerts to a Discord channel
 - [ ] Cross-check prices against a second source
 - [ ] Dashboard on top of Gold (Looker Studio or Metabase)
-- [x] Scheduled backups of `data/bronze/` (`POST /backup` + an n8n schedule)
+- [ ] Scheduled backups of `data/bronze/`
 
 ---
 
