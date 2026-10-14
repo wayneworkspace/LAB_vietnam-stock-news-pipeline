@@ -9,7 +9,6 @@ BRONZE_DB = os.path.join(DATA_DIR, "bronze", "bronze.sqlite")   # SQLite, OLTP
 SILVER_DB = os.path.join(DATA_DIR, "silver", "silver.duckdb")   # DuckDB, OLAP
 GOLD_DB = os.path.join(DATA_DIR, "gold", "gold.duckdb")         # DuckDB, OLAP
 GOLD_PARQUET_DIR = os.path.join(DATA_DIR, "gold", "parquet")    # Gold exported as Parquet
-BACKUP_DIR = os.path.join(DATA_DIR, "backups")                  # daily copies of the Bronze database
 RAW_DIR = os.getenv("RAW_DIR", os.path.join(DATA_DIR, "bronze", "json"))
 LEGACY_DB = os.getenv("DUCKDB_PATH", os.path.join(DATA_DIR, "stock.duckdb"))  # old DB, kept only for migration
 
